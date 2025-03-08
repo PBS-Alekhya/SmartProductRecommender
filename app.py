@@ -5,170 +5,122 @@ from flask_sqlalchemy import SQLAlchemy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-app = Flask(__name__)
+web_app = Flask(__name__)
 
-# load files===========================================================================================================
-trending_products = pd.read_csv("models/trending_products.csv")
-train_data = pd.read_csv("models/clean_data.csv")
+# ===========================================================================================================
+popular_products = pd.read_csv("models/popular_products.csv")
+processed_data = pd.read_csv("models/refined_data.csv")
 
-# database configuration---------------------------------------
-app.secret_key = "alskdjfwoeieiurlskdjfslkdjf"
-app.config['SQLALCHEMY_DATABASE_URI'] = "mysql://root:@localhost/ecom"
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
-
-
-# Define your model class for the 'signup' table
-class Signup(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(100), nullable=False)
-    password = db.Column(db.String(100), nullable=False)
-
-# Define your model class for the 'signup' table
-class Signin(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), nullable=False)
-    password = db.Column(db.String(100), nullable=False)
+# ----------------------------------------------------------------------------------------------------------
+web_app.secret_key = "randomsecurekey123"
+web_app.config['SQLALCHEMY_DATABASE_URI'] = "mysql://root:@localhost/product_recommender"
+web_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db_instance = SQLAlchemy(web_app)
 
 
-# Recommendations functions============================================================================================
-# Function to truncate product name
-def truncate(text, length):
-    if len(text) > length:
-        return text[:length] + "..."
-    else:
-        return text
+class UserRegistration(db_instance.Model):
+    user_id = db_instance.Column(db_instance.Integer, primary_key=True)
+    user_name = db_instance.Column(db_instance.String(100), nullable=False)
+    user_email = db_instance.Column(db_instance.String(100), nullable=False)
+    user_password = db_instance.Column(db_instance.String(100), nullable=False)
+
+class UserLogin(db_instance.Model):
+    login_id = db_instance.Column(db_instance.Integer, primary_key=True)
+    login_name = db_instance.Column(db_instance.String(100), nullable=False)
+    login_password = db_instance.Column(db_instance.String(100), nullable=False)
 
 
-def content_based_recommendations(train_data, item_name, top_n=10):
-    # Check if the item name exists in the training data
-    if item_name not in train_data['Name'].values:
-        print(f"Item '{item_name}' not found in the training data.")
+# ============================================================================================
+def shorten_text(content, max_length):
+    return content[:max_length] + "..." if len(content) > max_length else content
+
+
+def generate_recommendations(processed_data, product_name, top_n=10):
+    if product_name not in processed_data['ProductTitle'].values:
         return pd.DataFrame()
+    
+    tfidf_processor = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = tfidf_processor.fit_transform(processed_data['ProductTags'])
+    similarity_scores = cosine_similarity(tfidf_matrix, tfidf_matrix)
+    
+    product_index = processed_data[processed_data['ProductTitle'] == product_name].index[0]
+    ranked_products = sorted(list(enumerate(similarity_scores[product_index])), key=lambda x: x[1], reverse=True)
+    
+    top_similar_indices = [x[0] for x in ranked_products[1:top_n+1]]
+    recommended_products = processed_data.iloc[top_similar_indices][['ProductTitle', 'ReviewCount', 'Brand', 'ImageURL', 'Rating']]
+    
+    return recommended_products
 
-    # Create a TF-IDF vectorizer for item descriptions
-    tfidf_vectorizer = TfidfVectorizer(stop_words='english')
-
-    # Apply TF-IDF vectorization to item descriptions
-    tfidf_matrix_content = tfidf_vectorizer.fit_transform(train_data['Tags'])
-
-    # Calculate cosine similarity between items based on descriptions
-    cosine_similarities_content = cosine_similarity(tfidf_matrix_content, tfidf_matrix_content)
-
-    # Find the index of the item
-    item_index = train_data[train_data['Name'] == item_name].index[0]
-
-    # Get the cosine similarity scores for the item
-    similar_items = list(enumerate(cosine_similarities_content[item_index]))
-
-    # Sort similar items by similarity score in descending order
-    similar_items = sorted(similar_items, key=lambda x: x[1], reverse=True)
-
-    # Get the top N most similar items (excluding the item itself)
-    top_similar_items = similar_items[1:top_n+1]
-
-    # Get the indices of the top similar items
-    recommended_item_indices = [x[0] for x in top_similar_items]
-
-    # Get the details of the top similar items
-    recommended_items_details = train_data.iloc[recommended_item_indices][['Name', 'ReviewCount', 'Brand', 'ImageURL', 'Rating']]
-
-    return recommended_items_details
-# routes===============================================================================
-# List of predefined image URLs
-random_image_urls = [
-    "static/img/img_1.png",
-    "static/img/img_2.png",
-    "static/img/img_3.png",
-    "static/img/img_4.png",
-    "static/img/img_5.png",
-    "static/img/img_6.png",
-    "static/img/img_7.png",
-    "static/img/img_8.png",
+# ===============================================================================
+image_paths = [
+    "static/assets/img_1.png", "static/assets/img_2.png", "static/assets/img_3.png",
+    "static/assets/img_4.png", "static/assets/img_5.png", "static/assets/img_6.png",
+    "static/assets/img_7.png", "static/assets/img_8.png"
 ]
 
 
-@app.route("/")
-def index():
-    # Create a list of random image URLs for each product
-    random_product_image_urls = [random.choice(random_image_urls) for _ in range(len(trending_products))]
-    price = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
-    return render_template('index.html',trending_products=trending_products.head(8),truncate = truncate,
-                           random_product_image_urls=random_product_image_urls,
-                           random_price = random.choice(price))
+@web_app.route("/")
+def homepage():
+    randomized_images = [random.choice(image_paths) for _ in range(len(popular_products))]
+    price_list = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
+    return render_template('index.html', trending_items=popular_products.head(8), shorten_text=shorten_text,
+                           randomized_images=randomized_images, chosen_price=random.choice(price_list))
 
-@app.route("/main")
-def main():
-    return render_template('main.html')
+@web_app.route("/dashboard")
+def dashboard():
+    return render_template('dashboard.html')
 
-# routes
-@app.route("/index")
-def indexredirect():
-    # Create a list of random image URLs for each product
-    random_product_image_urls = [random.choice(random_image_urls) for _ in range(len(trending_products))]
-    price = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
-    return render_template('index.html', trending_products=trending_products.head(8), truncate=truncate,
-                           random_product_image_urls=random_product_image_urls,
-                           random_price=random.choice(price))
 
-@app.route("/signup", methods=['POST','GET'])
-def signup():
-    if request.method=='POST':
-        username = request.form['username']
-        email = request.form['email']
-        password = request.form['password']
-
-        new_signup = Signup(username=username, email=email, password=password)
-        db.session.add(new_signup)
-        db.session.commit()
-
-        # Create a list of random image URLs for each product
-        random_product_image_urls = [random.choice(random_image_urls) for _ in range(len(trending_products))]
-        price = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
-        return render_template('index.html', trending_products=trending_products.head(8), truncate=truncate,
-                               random_product_image_urls=random_product_image_urls, random_price=random.choice(price),
-                               signup_message='User signed up successfully!'
-                               )
-
-# Route for signup page
-@app.route('/signin', methods=['POST', 'GET'])
-def signin():
+@web_app.route("/user_register", methods=['POST','GET'])
+def user_register():
     if request.method == 'POST':
-        username = request.form['signinUsername']
-        password = request.form['signinPassword']
-        new_signup = Signin(username=username,password=password)
-        db.session.add(new_signup)
-        db.session.commit()
+        user_name = request.form['username']
+        user_email = request.form['email']
+        user_password = request.form['password']
+        
+        new_user = UserRegistration(user_name=user_name, user_email=user_email, user_password=user_password)
+        db_instance.session.add(new_user)
+        db_instance.session.commit()
+        
+        randomized_images = [random.choice(image_paths) for _ in range(len(popular_products))]
+        price_list = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
+        return render_template('index.html', trending_items=popular_products.head(8), shorten_text=shorten_text,
+                               randomized_images=randomized_images, chosen_price=random.choice(price_list),
+                               user_message='Registration successful!')
 
-        # Create a list of random image URLs for each product
-        random_product_image_urls = [random.choice(random_image_urls) for _ in range(len(trending_products))]
-        price = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
-        return render_template('index.html', trending_products=trending_products.head(8), truncate=truncate,
-                               random_product_image_urls=random_product_image_urls, random_price=random.choice(price),
-                               signup_message='User signed in successfully!'
-                               )
-@app.route("/recommendations", methods=['POST', 'GET'])
-def recommendations():
+
+@web_app.route("/user_login", methods=['POST', 'GET'])
+def user_login():
     if request.method == 'POST':
-        prod = request.form.get('prod')
-        nbr = int(request.form.get('nbr'))
-        content_based_rec = content_based_recommendations(train_data, prod, top_n=nbr)
+        login_name = request.form['signinUsername']
+        login_password = request.form['signinPassword']
+        
+        new_login = UserLogin(login_name=login_name, login_password=login_password)
+        db_instance.session.add(new_login)
+        db_instance.session.commit()
+        
+        randomized_images = [random.choice(image_paths) for _ in range(len(popular_products))]
+        price_list = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
+        return render_template('index.html', trending_items=popular_products.head(8), shorten_text=shorten_text,
+                               randomized_images=randomized_images, chosen_price=random.choice(price_list),
+                               user_message='Login successful!')
 
-        if content_based_rec.empty:
-            message = "No recommendations available for this product."
-            return render_template('main.html', message=message)
+
+@web_app.route("/get_recommendations", methods=['POST', 'GET'])
+def get_recommendations():
+    if request.method == 'POST':
+        search_product = request.form.get('prod')
+        num_recommendations = int(request.form.get('nbr'))
+        recommended_items = generate_recommendations(processed_data, search_product, top_n=num_recommendations)
+        
+        if recommended_items.empty:
+            return render_template('dashboard.html', message="No recommendations found for this product.")
         else:
-            # Create a list of random image URLs for each recommended product
-            random_product_image_urls = [random.choice(random_image_urls) for _ in range(len(trending_products))]
-            print(content_based_rec)
-            print(random_product_image_urls)
-
-            price = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
-            return render_template('main.html', content_based_rec=content_based_rec, truncate=truncate,
-                                   random_product_image_urls=random_product_image_urls,
-                                   random_price=random.choice(price))
+            randomized_images = [random.choice(image_paths) for _ in range(len(popular_products))]
+            price_list = [40, 50, 60, 70, 100, 122, 106, 50, 30, 50]
+            return render_template('dashboard.html', recommended_items=recommended_items, shorten_text=shorten_text,
+                                   randomized_images=randomized_images, chosen_price=random.choice(price_list))
 
 
-if __name__=='__main__':
-    app.run(debug=True)
+if __name__ == '__main__':
+    web_app.run(debug=True)
